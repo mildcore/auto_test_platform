@@ -1,0 +1,62 @@
+# 排除开发环境配置文件（避免覆盖容器生产环境配置）
+.flaskenv
+.env
+.env.local
+.env.*.local
+
+# 排除版本控制
+.git
+.gitignore
+.gitattributes
+
+# 排除 Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 排除开发数据（SQLite）
+backend/data/*.db
+backend/data/*.db-journal
+
+# 排除日志
+logs/
+*.log
+
+# 排除 IDE/编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 排除文档（可选，如果需要减小镜像）
+docs/
+*.md
+
+# 排除测试文件
+backend/tests/
+frontend/tests/
+
+# 排除 node_modules（前端构建时单独安装）
+frontend/node_modules/
+frontend/dist/
+
+# 排除 Docker 相关文件（避免嵌套构建）
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# 排除备份文件
+backup/
+backup*.sql
+*.sql.gz
+
+# 排除脚本（如果需要保留则删除这行）
+# scripts/

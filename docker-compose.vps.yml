@@ -1,0 +1,176 @@
+# 固件自动化测试平台 - VPS 低配优化配置（含 Traefik SSL）
+# 适用环境：1vCPU / 1GB RAM / 4GB 磁盘
+# 使用方法：docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d
+
+services:
+  # 前端 - 移除开发端口，添加 Traefik 路由
+  frontend:
+    ports: []  # 移除开发端口
+    labels:
+      - "traefik.enable=true"
+      # HTTP 重定向到 HTTPS
+      - "traefik.http.routers.frontend.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.middlewares=https-redirect"
+      # HTTPS 路由
+      - "traefik.http.routers.frontend-secure.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.frontend-secure.entrypoints=websecure"
+      - "traefik.http.routers.frontend-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-secure.tls=true"
+      # 服务配置
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+      - "traefik.http.services.frontend.loadbalancer.healthcheck.path=/"
+      - "traefik.http.services.frontend.loadbalancer.healthcheck.interval=30s"
+    networks:
+      - atp-network
+      - traefik-public
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # 后端 - 减少 worker 数量，仅内部访问
+  backend:
+    ports: []  # 移除开发端口
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--max-requests", "1000", "--max-requests-jitter", "50", "wsgi:app"]
+
+    labels:
+      # 后端默认不暴露，如需外部访问 API 可改为 true
+      - "traefik.enable=false"
+      # 如需暴露 API，取消下面注释：
+      # - "traefik.http.routers.backend.rule=Host(`api.${DOMAIN:-localhost}`)"
+      # - "traefik.http.routers.backend.entrypoints=websecure"
+      # - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
+      # - "traefik.http.services.backend.loadbalancer.server.port=5000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Celery Worker - 减少并发
+  celery-worker:
+    command: celery -A app.celery_worker worker -l info --concurrency=2
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Celery Beat - 最小化
+  celery-beat:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+
+  # Redis - 最小内存配置，移除端口暴露
+  redis:
+    ports: []  # 生产不暴露端口
+    command: redis-server --appendonly yes --maxmemory 64mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 96M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+  # MySQL - 极简配置（1GB 内存适配）
+  db:
+    ports: []  # 生产不暴露端口
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=50
+      --innodb_buffer_pool_size=32M
+      --innodb_log_buffer_size=8M
+      --innodb_flush_log_at_trx_commit=2
+      --query_cache_size=0
+      --key_buffer_size=8M
+      --tmp_table_size=8M
+      --max_heap_table_size=8M
+      --thread_cache_size=4
+      --table_open_cache=64
+      --performance_schema=off
+      --skip-innodb-doublewrite
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Traefik - 反向代理和 SSL 终结（VPS 优化版）
+  traefik:
+    image: traefik:v3.0
+    container_name: atp-traefik
+    restart: unless-stopped
+    command:
+      # 全局配置
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      # 日志配置（精简以节省磁盘）
+      - "--log.level=WARN"
+      - "--accesslog=false"
+      # 提供商配置
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=traefik-public"
+      # 入口点配置
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # HTTP 重定向到 HTTPS
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt 配置
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # HTTP 挑战备用
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - traefik-public
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+# 生产环境数据卷
+volumes:
+  traefik-certs:
+    driver: local
+
+# 生产环境网络
+networks:
+  traefik-public:
+    driver: bridge
+    name: traefik-public

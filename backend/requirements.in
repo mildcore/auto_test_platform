@@ -1,0 +1,29 @@
+# 固件自动化测试平台 - 后端依赖 (源文件)
+# 使用 pip-tools 管理: pip-compile requirements.in
+
+# Web框架
+Flask>=3.0.0,<4.0.0
+Flask-SQLAlchemy>=3.1.0,<4.0.0
+Flask-Migrate>=4.0.0,<5.0.0
+Flask-JWT-Extended>=4.6.0,<5.0.0
+Werkzeug>=3.0.0,<4.0.0
+
+# 数据库
+SQLAlchemy>=2.0.0,<3.0.0
+PyMySQL>=1.1.0,<2.0.0
+
+# MySQL 8.0 caching_sha2_password 认证支持
+cryptography>=41.0.0
+
+# 异步任务
+Celery>=5.3.0,<6.0.0
+redis>=5.0.0,<6.0.0
+
+# 定时任务解析
+croniter>=2.0.0,<3.0.0
+
+# 工具库
+python-dotenv>=1.0.0,<2.0.0
+
+# 生产环境
+Gunicorn>=23.0.0,<24.0.0

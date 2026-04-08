@@ -1,0 +1,135 @@
+# 固件自动化测试平台 - 基础 Docker Compose 配置
+# 开发环境直接使用，生产环境配合 docker-compose.prod.yml 使用
+# 启动命令: docker compose up -d
+
+name: auto-test-platform
+
+services:
+  # 前端服务（开发环境直接暴露端口）
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: atp-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - atp-network
+
+  # 后端API服务
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: atp-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV
+      - DATABASE_URL=${DATABASE_URL:-mysql+pymysql://root:password@db:3306/test_platform}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key-in-production}
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    networks:
+      - atp-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Celery Worker - 执行异步任务
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: atp-celery-worker
+    command: celery -A app.celery_worker worker -l info --concurrency=4
+    environment:
+      - FLASK_ENV
+      - DATABASE_URL=${DATABASE_URL:-mysql+pymysql://root:password@db:3306/test_platform}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key-in-production}
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    networks:
+      - atp-network
+
+  # Celery Beat - 定时任务调度
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: atp-celery-beat
+    command: celery -A app.celery_worker beat -l info
+    environment:
+      - FLASK_ENV
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key-in-production}
+    volumes:
+      - celery_beat_data:/app/data
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+    networks:
+      - atp-network
+
+  # Redis - 消息队列和缓存
+  redis:
+    image: redis:7-alpine
+    container_name: atp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - atp-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # MySQL - 数据库
+  db:
+    image: mysql:8.0
+    container_name: atp-db
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: test_platform
+      MYSQL_USER: ${MYSQL_USER:-testuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-testpassword}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      #- ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    networks:
+      - atp-network
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=200
+      --innodb_buffer_pool_size=512M
+
+# 数据卷
+volumes:
+  redis_data:
+    driver: local
+  mysql_data:
+    driver: local
+  celery_beat_data:
+    driver: local
+
+# 网络
+networks:
+  atp-network:
+    driver: bridge

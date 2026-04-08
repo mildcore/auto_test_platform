@@ -1,0 +1,154 @@
+# 固件自动化测试平台 - 生产环境 Docker Compose 配置
+# 配合基础配置使用，添加 Traefik、SSL、资源限制等
+# 启动命令: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  # 前端服务 - 移除开发端口，添加 Traefik 路由
+  frontend:
+    ports: []  # 移除开发端口暴露
+    labels:
+      # 启用 Traefik
+      - "traefik.enable=true"
+      # HTTP 路由（自动重定向到 HTTPS）
+      - "traefik.http.routers.frontend.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.middlewares=https-redirect"
+      # HTTPS 路由
+      - "traefik.http.routers.frontend-secure.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.frontend-secure.entrypoints=websecure"
+      - "traefik.http.routers.frontend-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-secure.tls=true"
+      # 服务配置
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+      - "traefik.http.services.frontend.loadbalancer.healthcheck.path=/"
+      - "traefik.http.services.frontend.loadbalancer.healthcheck.interval=10s"
+    networks:
+      - atp-network
+      - traefik-public
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # 后端API服务 - 仅内部访问
+  backend:
+    ports: []  # 移除开发端口暴露，仅内部访问
+    labels:
+      # 可选：如果需要通过特定子域名访问 API
+      - "traefik.enable=false"  # 默认不暴露，如需暴露改为 true
+      # 如需暴露 API，取消下面注释：
+      # - "traefik.http.routers.backend.rule=Host(`api.${DOMAIN:-localhost}`)"
+      # - "traefik.http.routers.backend.entrypoints=websecure"
+      # - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
+      # - "traefik.http.services.backend.loadbalancer.server.port=5000"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Celery Worker - 资源限制
+  celery-worker:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Celery Beat - 资源限制
+  celery-beat:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+  # Redis - 移除端口暴露，仅内部访问
+  redis:
+    ports: []  # 生产不暴露 Redis 端口
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # MySQL - 移除端口暴露，仅内部访问
+  db:
+    ports: []  # 生产不暴露 MySQL 端口
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Traefik - 反向代理和 SSL 终结
+  traefik:
+    image: traefik:v3.0
+    container_name: atp-traefik
+    restart: unless-stopped
+    command:
+      # 全局配置
+      - "--api.dashboard=true"
+      - "--api.insecure=false"  # 生产环境建议禁用或添加认证
+      # 日志配置
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      # 提供商配置
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=traefik-public"
+      # 入口点配置
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # HTTP 重定向到 HTTPS
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt 配置（自动 SSL 证书）
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # 启用 HTTP 挑战（备用）
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - traefik-public
+    labels:
+      # Traefik Dashboard 可选访问（建议添加基本认证）
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.service=api@internal"
+      # 基本认证（可选）
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_AUTH:-admin:$$apr1$$H6uskkkW$$IgXLP6ewTrSuBkTrqE8wj/}"
+      - "traefik.http.routers.traefik.middlewares=traefik-auth"
+
+# 生产环境特有数据卷
+volumes:
+  traefik-certs:
+    driver: local
+
+# 生产环境网络
+networks:
+  traefik-public:
+    driver: bridge
+    name: traefik-public  # 固定名称，方便其他项目复用
