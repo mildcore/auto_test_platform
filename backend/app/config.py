@@ -79,6 +79,16 @@ class ProductionConfig(Config):
     
     # JWT密钥从环境变量读取，延迟检查（在应用初始化时）
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY')
+    
+    # SQLAlchemy 连接池配置
+    # 从环境变量读取，默认小连接池防止 MySQL 连接数超限
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_size': int(os.environ.get('SQLALCHEMY_POOL_SIZE', 5)),
+        'max_overflow': int(os.environ.get('SQLALCHEMY_MAX_OVERFLOW', 5)),
+        'pool_recycle': int(os.environ.get('SQLALCHEMY_POOL_RECYCLE', 300)),
+        'pool_timeout': 30,
+    }
 
 
 class TestingConfig(Config):

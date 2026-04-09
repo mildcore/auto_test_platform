@@ -204,7 +204,15 @@ celery -A app.celery_worker beat -l info
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# 或者复制到docker-compose.override.yml，docker可以自动加载并合并，无需-f指定
+cp docker-compose.prod.yml docker-compose.override.yml
+docker compose up -d
+
+# 生产数据库迁移
+docker compose run -e FLASK_ENV=production --rm backend flask db upgrade     
 ```
+  
 
 生产环境包含：
 - SSL 自动配置（Let's Encrypt）

@@ -14,12 +14,12 @@ def execute_test_task(self, task_id):
     """
     执行测试任务（Celery任务）
     """
-    from app import create_app
     from app.repositories.task_repo import TaskRepository
     from app.services.executor import TestExecutor
     from app.extensions import db
+    from app.celery_worker.celery_app import get_worker_app
     
-    app = create_app()
+    app = get_worker_app()  # 使用进程级缓存的 App，避免重复创建
     
     with app.app_context():
         task_repo = TaskRepository()
@@ -105,12 +105,12 @@ def check_scheduled_plans():
     定时检查并执行计划（Celery Beat调度）
     每分钟执行一次，检查是否有定时计划需要执行
     """
-    from app import create_app
     from app.services.plan_service import PlanService
+    from app.celery_worker.celery_app import get_worker_app
     from croniter import croniter
     from datetime import datetime
     
-    app = create_app()
+    app = get_worker_app()  # 使用进程级缓存的 App，避免重复创建
     
     with app.app_context():
         plan_service = PlanService()

@@ -5,14 +5,13 @@
 services:
   # 前端服务 - 移除开发端口，添加 Traefik 路由
   frontend:
-    ports: []  # 移除开发端口暴露
+    ports: !reset []  # 移除开发端口暴露
     labels:
       # 启用 Traefik
       - "traefik.enable=true"
       # HTTP 路由（自动重定向到 HTTPS）
       - "traefik.http.routers.frontend.rule=Host(`${DOMAIN:-localhost}`)"
       - "traefik.http.routers.frontend.entrypoints=web"
-      - "traefik.http.routers.frontend.middlewares=https-redirect"
       # HTTPS 路由
       - "traefik.http.routers.frontend-secure.rule=Host(`${DOMAIN:-localhost}`)"
       - "traefik.http.routers.frontend-secure.entrypoints=websecure"
@@ -36,7 +35,7 @@ services:
 
   # 后端API服务 - 仅内部访问
   backend:
-    ports: []  # 移除开发端口暴露，仅内部访问
+    ports: !reset []  # 移除开发端口暴露，仅内部访问
     labels:
       # 可选：如果需要通过特定子域名访问 API
       - "traefik.enable=false"  # 默认不暴露，如需暴露改为 true
@@ -78,7 +77,7 @@ services:
 
   # Redis - 移除端口暴露，仅内部访问
   redis:
-    ports: []  # 生产不暴露 Redis 端口
+    ports: !reset []  # 生产不暴露 Redis 端口
     deploy:
       resources:
         limits:
@@ -87,7 +86,7 @@ services:
 
   # MySQL - 移除端口暴露，仅内部访问
   db:
-    ports: []  # 生产不暴露 MySQL 端口
+    ports: !reset []  # 生产不暴露 MySQL 端口
     deploy:
       resources:
         limits:
@@ -96,7 +95,7 @@ services:
 
   # Traefik - 反向代理和 SSL 终结
   traefik:
-    image: traefik:v3.0
+    image: traefik:v2.11
     container_name: atp-traefik
     restart: unless-stopped
     command:

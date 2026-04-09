@@ -5,13 +5,12 @@
 services:
   # 前端 - 移除开发端口，添加 Traefik 路由
   frontend:
-    ports: []  # 移除开发端口
+    ports: !reset []  # 移除开发端口
     labels:
       - "traefik.enable=true"
-      # HTTP 重定向到 HTTPS
+      # HTTP 路由
       - "traefik.http.routers.frontend.rule=Host(`${DOMAIN:-localhost}`)"
       - "traefik.http.routers.frontend.entrypoints=web"
-      - "traefik.http.routers.frontend.middlewares=https-redirect"
       # HTTPS 路由
       - "traefik.http.routers.frontend-secure.rule=Host(`${DOMAIN:-localhost}`)"
       - "traefik.http.routers.frontend-secure.entrypoints=websecure"
@@ -35,9 +34,13 @@ services:
 
   # 后端 - 减少 worker 数量，仅内部访问
   backend:
-    ports: []  # 移除开发端口
+    ports: !reset []  # 移除开发端口
     command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--max-requests", "1000", "--max-requests-jitter", "50", "wsgi:app"]
-
+    environment:
+      # SQLAlchemy 连接池配置（低内存 VPS 优化）
+      - SQLALCHEMY_POOL_SIZE=5
+      - SQLALCHEMY_MAX_OVERFLOW=5
+      - SQLALCHEMY_POOL_RECYCLE=300
     labels:
       # 后端默认不暴露，如需外部访问 API 可改为 true
       - "traefik.enable=false"
@@ -55,9 +58,19 @@ services:
           cpus: '0.1'
           memory: 128M
 
-  # Celery Worker - 减少并发
+  # Celery Worker
   celery-worker:
-    command: celery -A app.celery_worker worker -l info --concurrency=2
+    # 方案 1: Prefork限制并发数以适应低内存环境
+    command: celery -A app.celery_worker worker -l info --concurrency=1 --pool=prefork
+    
+    # 方案 2: Threads 模式（并发 4，共享连接池）
+    # command: celery -A app.celery_worker worker -l info --concurrency=4 --pool=threads
+    
+    environment:
+      # SQLAlchemy 连接池配置（Worker 进程共享）
+      - SQLALCHEMY_POOL_SIZE=2
+      - SQLALCHEMY_MAX_OVERFLOW=8
+      - SQLALCHEMY_POOL_RECYCLE=300
     deploy:
       resources:
         limits:
@@ -69,6 +82,11 @@ services:
 
   # Celery Beat - 最小化
   celery-beat:
+    environment:
+      # Beat 只需要最小连接池
+      - SQLALCHEMY_POOL_SIZE=1
+      - SQLALCHEMY_MAX_OVERFLOW=1
+      - SQLALCHEMY_POOL_RECYCLE=500
     deploy:
       resources:
         limits:
@@ -80,7 +98,7 @@ services:
 
   # Redis - 最小内存配置，移除端口暴露
   redis:
-    ports: []  # 生产不暴露端口
+    ports: !reset []  # 生产不暴露端口
     command: redis-server --appendonly yes --maxmemory 64mb --maxmemory-policy allkeys-lru
     deploy:
       resources:
@@ -93,21 +111,18 @@ services:
 
   # MySQL - 极简配置（1GB 内存适配）
   db:
-    ports: []  # 生产不暴露端口
+    ports: !reset []  # 生产不暴露端口
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
-      --max_connections=50
-      --innodb_buffer_pool_size=32M
+      --max_connections=100
+      --wait-timeout=600
+      --innodb_buffer_pool_size=64M
+      --performance_schema=off
       --innodb_log_buffer_size=8M
       --innodb_flush_log_at_trx_commit=2
-      --query_cache_size=0
-      --key_buffer_size=8M
       --tmp_table_size=8M
       --max_heap_table_size=8M
-      --thread_cache_size=4
-      --table_open_cache=64
-      --performance_schema=off
       --skip-innodb-doublewrite
     deploy:
       resources:
@@ -120,13 +135,13 @@ services:
 
   # Traefik - 反向代理和 SSL 终结（VPS 优化版）
   traefik:
-    image: traefik:v3.0
+    image: traefik:v2.11
     container_name: atp-traefik
     restart: unless-stopped
     command:
       # 全局配置
       - "--api.dashboard=true"
-      - "--api.insecure=false"
+      - "--api.insecure=false"    # 生产环境建议禁用，https://localhost:8080/dashboard/访问
       # 日志配置（精简以节省磁盘）
       - "--log.level=WARN"
       - "--accesslog=false"
@@ -150,6 +165,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # - "8080:8080"  # Dashboard，需搭配--api.insecure=true使用
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-certs:/letsencrypt

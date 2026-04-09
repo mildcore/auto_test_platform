@@ -2,6 +2,8 @@
 Celery应用配置
 """
 from celery import Celery
+from celery.signals import worker_process_init
+from app.utils.logger import logger
 import os
 
 # 尝试从环境变量获取 Redis URL，否则使用默认值
@@ -21,6 +23,33 @@ celery = Celery(
     backend=redis_url,
     include=['app.celery_worker.tasks']
 )
+
+# Worker 进程级 Flask 应用缓存（app和连接池共用）
+_worker_app = None
+
+
+@worker_process_init.connect
+def init_worker_process(**kwargs):
+    """
+    Worker 子进程启动时初始化 Flask 应用
+    每个 Worker 进程只执行一次，避免每次任务都创建新的 App
+    """
+    global _worker_app
+    from app import create_app
+    _worker_app = create_app()
+    logger.info(f'[Worker PID {os.getpid()}] Flask 应用初始化完成')
+
+
+def get_worker_app():
+    """
+    获取当前 Worker 进程的 Flask 应用实例
+    """
+    global _worker_app
+    if _worker_app is None:
+        from app import create_app
+        _worker_app = create_app()
+        logger.warning(f'[Worker PID {os.getpid()}] 兜底初始化 Flask 应用')
+    return _worker_app
 
 # 基础配置
 celery.conf.task_serializer = 'json'

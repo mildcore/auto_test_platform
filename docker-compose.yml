@@ -28,7 +28,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - FLASK_ENV
+      - FLASK_ENV=${FLASK_ENV:-production}
       - DATABASE_URL=${DATABASE_URL:-mysql+pymysql://root:password@db:3306/test_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key-in-production}
@@ -53,7 +53,7 @@ services:
     container_name: atp-celery-worker
     command: celery -A app.celery_worker worker -l info --concurrency=4
     environment:
-      - FLASK_ENV
+      - FLASK_ENV=${FLASK_ENV:-production}
       - DATABASE_URL=${DATABASE_URL:-mysql+pymysql://root:password@db:3306/test_platform}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key-in-production}
@@ -63,6 +63,8 @@ services:
     restart: unless-stopped
     networks:
       - atp-network
+    healthcheck:
+      disable: true
 
   # Celery Beat - 定时任务调度
   celery-beat:
@@ -72,7 +74,7 @@ services:
     container_name: atp-celery-beat
     command: celery -A app.celery_worker beat -l info
     environment:
-      - FLASK_ENV
+      - FLASK_ENV=${FLASK_ENV:-production}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key-in-production}
     volumes:
@@ -83,6 +85,8 @@ services:
     restart: unless-stopped
     networks:
       - atp-network
+    healthcheck:
+      disable: true
 
   # Redis - 消息队列和缓存
   redis:
