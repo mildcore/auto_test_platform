@@ -1,0 +1,91 @@
+# 自动化测试平台 - Nginx 配置文件示例
+# 复制到 /etc/nginx/conf.d/atp.conf 并根据实际情况修改
+# 
+# 使用方式：
+# 1. 将 example.com 替换为你的实际域名
+# 2. 替换 SSL 证书路径为实际路径（如果域名不同）:%s/example.com/your-domain.com/g
+# 3. 测试配置：nginx -t
+# 4. 重载：systemctl reload nginx
+
+# ============================================
+# HTTP -> HTTPS 跳转
+# ============================================
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com;
+    return 301 https://$host$request_uri;
+}
+
+# ============================================
+# HTTPS 服务器 - 前端代理
+# ============================================
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name example.com;
+
+    # SSL 证书配置（使用 acme.sh 安装的证书）
+    ssl_certificate /etc/nginx/ssl/example.com/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/example.com/key.pem;
+
+    # SSL 强化配置
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:MozSSL:10m;
+    ssl_session_tickets off;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # 安全响应头
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # 代理到前端容器（Docker 映射到 127.0.0.1:3000）
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        
+        # 关键：传递正确的 Host 头部
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket 支持（如有需要）
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # 超时设置
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # 日志配置
+    access_log /var/log/nginx/example.com-access.log;
+    error_log /var/log/nginx/example.com-error.log;
+}
+
+# ============================================
+# （可选）独立的后端 API 域名
+# 如需直接访问后端 API，可取消注释并配置
+# ============================================
+# server {
+#     listen 443 ssl http2;
+#     server_name api.YOUR_DOMAIN;
+#     
+#     ssl_certificate /etc/nginx/ssl/example.com/fullchain.pem;
+#     ssl_certificate_key /etc/nginx/ssl/example.com/key.pem;
+#     # SSL 配置同上...
+#     
+#     location / {
+#         proxy_pass http://127.0.0.1:5000;  # 需先在 docker-compose 中暴露后端端口
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#     }
+# }

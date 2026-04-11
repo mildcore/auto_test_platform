@@ -1,0 +1,108 @@
+# 固件自动化测试平台 - VPS 低配优化配置（无 Traefik，使用宿主机 Nginx）
+# 适用环境：1vCPU / 1GB RAM / 4GB 磁盘，已有 Nginx 处理 SSL
+# 使用方法：docker compose -f docker-compose.yml -f docker-compose.vps-no-traefik.yml up -d
+
+services:
+  # 前端 - 暴露端口给宿主机 Nginx 代理
+  frontend:
+    ports: !override ["127.0.0.1:3000:80"]  # 仅监听本地，由宿主机 Nginx 反向代理
+    # 前端容器内 Nginx 已配置 /api/ 代理到后端，无需额外配置
+    networks:
+      - atp-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # 后端 - 仅内部访问（前端容器内 Nginx 会代理 /api/ 请求）
+  backend:
+    ports: !reset []  # 不暴露端口给宿主机
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--max-requests", "1000", "--max-requests-jitter", "50", "wsgi:app"]
+    environment:
+      # SQLAlchemy 连接池配置（低内存 VPS 优化）
+      - SQLALCHEMY_POOL_SIZE=5
+      - SQLALCHEMY_MAX_OVERFLOW=5
+      - SQLALCHEMY_POOL_RECYCLE=300
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Celery Worker
+  celery-worker:
+    command: celery -A app.celery_worker worker -l info --concurrency=1 --pool=prefork
+    environment:
+      - SQLALCHEMY_POOL_SIZE=2
+      - SQLALCHEMY_MAX_OVERFLOW=8
+      - SQLALCHEMY_POOL_RECYCLE=300
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Celery Beat
+  celery-beat:
+    environment:
+      - SQLALCHEMY_POOL_SIZE=1
+      - SQLALCHEMY_MAX_OVERFLOW=1
+      - SQLALCHEMY_POOL_RECYCLE=500
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+
+  # Redis - 仅内部访问
+  redis:
+    ports: !reset []
+    command: redis-server --appendonly yes --maxmemory 64mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 96M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+  # MySQL - 仅内部访问
+  db:
+    ports: !reset []
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=100
+      --wait-timeout=600
+      --innodb_buffer_pool_size=64M
+      --performance_schema=off
+      --innodb_log_buffer_size=8M
+      --innodb_flush_log_at_trx_commit=2
+      --tmp_table_size=8M
+      --max_heap_table_size=8M
+      --skip-innodb-doublewrite
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+# 网络配置（使用基础 compose 中的 atp-network）
+# 无需额外定义，继承自 docker-compose.yml
